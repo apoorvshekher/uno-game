@@ -1,0 +1,125 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>UNO</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+
+  <!-- ── Setup Screen ──────────────────────────────────────────────────────── -->
+  <div id="setup-screen">
+    <div class="setup-card">
+      <h1 class="uno-logo">UNO</h1>
+      <p class="setup-sub">Local game — online play coming soon</p>
+
+      <form id="setup-form">
+        <label class="field-label">Human Players</label>
+        <div id="player-fields">
+          <div class="player-row">
+            <span class="player-num">1</span>
+            <input type="text" class="player-name" placeholder="Your name" value="Player 1" maxlength="16">
+          </div>
+        </div>
+        <div class="setup-row">
+          <button type="button" id="add-human" class="btn btn-outline">+ Add Human</button>
+        </div>
+
+        <label class="field-label" style="margin-top:1.5rem">CPU Opponents</label>
+        <div class="setup-row">
+          <button type="button" class="cpu-btn btn-outline" data-n="0">0</button>
+          <button type="button" class="cpu-btn btn-outline" data-n="1">1</button>
+          <button type="button" class="cpu-btn btn-outline selected" data-n="2">2</button>
+          <button type="button" class="cpu-btn btn-outline" data-n="3">3</button>
+        </div>
+        <p id="player-count-hint" class="hint"></p>
+
+        <button type="submit" class="btn btn-primary" id="start-btn">Deal Cards</button>
+      </form>
+    </div>
+  </div>
+
+  <!-- ── Game Screen ───────────────────────────────────────────────────────── -->
+  <div id="game-screen" hidden>
+
+    <header class="game-header">
+      <span class="uno-logo-sm">UNO</span>
+      <div class="header-info">
+        <span id="hdr-turn"></span>
+        <span id="hdr-direction"></span>
+        <span id="hdr-draw-pile"></span>
+      </div>
+      <button class="btn btn-sm btn-outline" id="quit-btn">Quit</button>
+    </header>
+
+    <!-- Opponents row -->
+    <section id="opponents-area"></section>
+
+    <!-- Game board -->
+    <section id="board-area">
+      <div id="draw-pile-btn" class="pile draw-pile" title="Draw a card">
+        <div class="pile-label">DRAW</div>
+        <div id="draw-count" class="pile-count"></div>
+      </div>
+      <div id="discard-pile" class="pile">
+        <div class="pile-label">DISCARD</div>
+      </div>
+      <div id="active-color-badge"></div>
+    </section>
+
+    <!-- Message log -->
+    <div id="message-bar"></div>
+
+    <!-- Current player area -->
+    <section id="player-area">
+      <div id="player-label"></div>
+      <div id="hand-area"></div>
+      <div id="action-bar">
+        <button class="btn btn-draw" id="draw-btn">Draw Card</button>
+      </div>
+    </section>
+
+  </div>
+
+  <!-- ── Pass Device Overlay ────────────────────────────────────────────────── -->
+  <div id="pass-overlay" class="overlay" hidden>
+    <div class="overlay-card">
+      <div class="pass-icon">🔄</div>
+      <h2 id="pass-title">Pass the device</h2>
+      <p id="pass-sub"></p>
+      <button class="btn btn-primary" id="pass-ready-btn">I'm ready — show my hand</button>
+    </div>
+  </div>
+
+  <!-- ── Wild Color Picker ──────────────────────────────────────────────────── -->
+  <div id="color-picker" class="overlay" hidden>
+    <div class="overlay-card">
+      <h2>Choose a Color</h2>
+      <div class="color-grid">
+        <button class="color-btn" data-color="Red"    style="background:#dc2626">Red</button>
+        <button class="color-btn" data-color="Blue"   style="background:#2563eb">Blue</button>
+        <button class="color-btn" data-color="Green"  style="background:#16a34a">Green</button>
+        <button class="color-btn" data-color="Yellow" style="background:#ca8a04">Yellow</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Winner Overlay ────────────────────────────────────────────────────── -->
+  <div id="winner-overlay" class="overlay" hidden>
+    <div class="overlay-card winner-card">
+      <div class="trophy">🏆</div>
+      <h2 id="winner-name"></h2>
+      <p class="winner-sub">wins the game!</p>
+      <button class="btn btn-primary" id="play-again-btn">Play Again</button>
+    </div>
+  </div>
+
+  <!-- UNO flash -->
+  <div id="uno-flash" hidden>
+    <div class="uno-flash-text">UNO!</div>
+  </div>
+
+  <script src="/static/game.js"></script>
+</body>
+</html>
