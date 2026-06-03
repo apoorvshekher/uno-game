@@ -191,7 +191,7 @@ function connectWS(roomCode, playerId) {
         window.scrollTo(0, 0);
       }
       render(msg.state);
-      animateCpuPlays(msg.state);
+      animateCpuPlays(msg.state).then(() => animateDrawCards(msg.state.messages || []));
     } else if (msg.type === 'error') {
       showError(msg.message);
     }
@@ -305,17 +305,33 @@ function render(state) {
   const humanIdx = firstHumanIndex(state);
   opponentsArea.innerHTML = '';
   state.players.forEach((p, i) => {
-    if (p.is_human && i === humanIdx) return; // current viewer — shown in player area
+    if (p.is_viewer) return;                    // online: skip self
+    if (!isOnlineMode && p.is_human && i === humanIdx) return; // local: skip current viewer
     const box = document.createElement('div');
     box.className = 'opponent-box' + (p.is_current ? ' current' : '');
-    const cardBacks = Math.min(p.card_count, 8);
-    const isUno = p.card_count === 1;
+    box.dataset.playerName = p.name;
+    const isUno  = p.card_count === 1;
+    const icon   = p.is_human ? '👤' : '🤖';
+    const avatar = p.name.charAt(0).toUpperCase();
     box.innerHTML = `
-      <div class="opp-name">${esc(p.name)} ${p.is_human ? '👤' : '🤖'}</div>
-      <div class="opp-cards">${'<div class="card-back"></div>'.repeat(cardBacks)}</div>
-      <div class="opp-count ${isUno ? 'uno' : ''}">${isUno ? '🔴 UNO!' : p.card_count + ' cards'}</div>
-      ${p.is_current ? '<div style="font-size:.7rem;color:var(--accent);font-weight:700">▶ TURN</div>' : ''}
+      <div class="opp-avatar">${avatar}</div>
+      <div class="opp-info">
+        <div class="opp-name">${esc(p.name)} ${icon}</div>
+        <div class="opp-meta">
+          <div class="opp-count ${isUno ? 'uno' : ''}">
+            ${isUno ? '🔴 UNO!' : p.card_count + (p.card_count === 1 ? ' card' : ' cards')}
+          </div>
+        </div>
+      </div>
+      ${p.is_current ? '<div class="opp-turn-pip"></div>' : ''}
     `;
+    if (p.uno_vulnerable) {
+      const catchBtn = document.createElement('button');
+      catchBtn.className = 'btn-catch';
+      catchBtn.textContent = 'Catch!';
+      catchBtn.addEventListener('click', () => onCatchUno(p.index, p.name));
+      box.appendChild(catchBtn);
+    }
     opponentsArea.appendChild(box);
   });
 
@@ -383,11 +399,17 @@ function render(state) {
         unoBtn.className = 'btn btn-uno';
         unoBtn.textContent = unoCalled ? '✓ UNO!' : '🔴 UNO!';
         if (unoCalled) unoBtn.style.animation = 'none';
-        unoBtn.addEventListener('click', () => {
+        unoBtn.addEventListener('click', async () => {
+          if (unoCalled) return;
           unoCalled = true;
           showUnoFlash();
           unoBtn.textContent = '✓ UNO!';
           unoBtn.style.animation = 'none';
+          if (isOnlineMode) {
+            wsConnection.send(JSON.stringify({ type: 'call_uno' }));
+          } else if (gameId) {
+            await api('POST', `/api/game/${gameId}/call_uno`).catch(() => {});
+          }
         });
         actionBar.appendChild(unoBtn);
       }
@@ -482,6 +504,7 @@ drawBtn.addEventListener('click', async () => {
     const state = await api('POST', `/api/game/${gameId}/draw`);
     render(state);
     await animateCpuPlays(state);
+    await animateDrawCards(state.messages || []);
     handlePassScreenIfNeeded(state);
   } catch (err) {
     showError(err.message);
@@ -509,6 +532,7 @@ async function doPlay(cardIndex, chosenColor, cardEl) {
     ]);
     render(state);
     await animateCpuPlays(state);
+    await animateDrawCards(state.messages || []);
     handlePassScreenIfNeeded(state);
   } catch (err) {
     showError(err.message);
@@ -581,6 +605,22 @@ quitBtn.addEventListener('click', () => {
   startBtn.textContent = 'Deal Cards';
 });
 
+// ── Catch UNO ─────────────────────────────────────────────────────────────────
+
+async function onCatchUno(targetIndex, targetName) {
+  if (isOnlineMode) {
+    wsConnection.send(JSON.stringify({ type: 'catch_uno', target_index: targetIndex }));
+    return;
+  }
+  try {
+    const state = await api('POST', `/api/game/${gameId}/catch/${targetIndex}`);
+    render(state);
+    await animateDrawCards(state.messages || []);
+  } catch (err) {
+    showError(err.message);
+  }
+}
+
 // ── Card fly animation ─────────────────────────────────────────────────────────
 
 function flyCard(fromEl, cloneSource, toEl) {
@@ -617,11 +657,34 @@ async function animateCpuPlays(state) {
   for (const msg of plays) {
     const name = msg.match(/^(.+?) played /)?.[1];
     if (!name) continue;
-    const box = [...opponentsArea.querySelectorAll('.opponent-box')]
-      .find(b => b.querySelector('.opp-name')?.textContent.includes(name));
+    const box = findOpponentBox(name);
     if (!box) continue;
     await flyCard(box, topCardEl, discardPile);
   }
+}
+
+async function animateDrawCards(messages) {
+  for (const msg of messages) {
+    const multi  = msg.match(/^(.+?) draws (\d+) cards/);
+    const single = msg.match(/^(.+?) draws a card/);
+    const name   = (multi || single)?.[1];
+    const count  = multi ? parseInt(multi[2]) : single ? 1 : 0;
+    if (!name || count === 0) continue;
+
+    const box = findOpponentBox(name);
+    if (!box) continue; // viewer drawing — skip box animation
+
+    for (let i = 0; i < Math.min(count, 4); i++) {
+      flyCard(drawPileBtn, drawPileBtn, box);
+      await new Promise(r => setTimeout(r, 90));
+    }
+    await new Promise(r => setTimeout(r, 420));
+  }
+}
+
+function findOpponentBox(playerName) {
+  return [...opponentsArea.querySelectorAll('.opponent-box')]
+    .find(b => b.dataset.playerName === playerName) || null;
 }
 
 // ── UNO flash ──────────────────────────────────────────────────────────────────

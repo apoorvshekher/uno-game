@@ -178,58 +178,89 @@ body {
 
 /* ── Opponents ─────────────────────────────────────────────────────────────── */
 #opponents-area {
-  display: flex;
-  gap: .8rem;
-  padding: 1rem 1.2rem .5rem;
-  overflow-x: auto;
-  justify-content: center;
-  flex-wrap: wrap;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+  gap: .45rem;
+  padding: .6rem .8rem .35rem;
 }
 .opponent-box {
   background: var(--surface);
   border: 1px solid var(--border);
-  border-radius: 10px;
-  padding: .6rem 1rem;
+  border-radius: 8px;
+  padding: .45rem .6rem;
   display: flex;
-  flex-direction: column;
   align-items: center;
-  gap: .4rem;
-  min-width: 110px;
-  transition: border-color .2s;
+  gap: .55rem;
+  transition: border-color .2s, box-shadow .2s;
+  min-width: 0;
 }
 .opponent-box.current {
   border-color: var(--accent);
-  box-shadow: 0 0 12px rgba(245,158,11,.25);
+  box-shadow: 0 0 10px rgba(245,158,11,.22);
+}
+.opp-avatar {
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  background: var(--surface2);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: .8rem;
+  font-weight: 800;
+  color: var(--accent);
+  flex-shrink: 0;
+  letter-spacing: 0;
+}
+.opp-info {
+  flex: 1;
+  min-width: 0;
 }
 .opp-name {
-  font-size: .85rem;
+  font-size: .78rem;
   font-weight: 700;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  max-width: 100px;
 }
-.opp-cards {
+.opp-meta {
   display: flex;
-  gap: 3px;
+  align-items: center;
+  gap: .35rem;
+  margin-top: .1rem;
 }
+.opp-count {
+  font-size: .7rem;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+.opp-count.uno {
+  color: #ef4444;
+  font-weight: 800;
+}
+.opp-turn-pip {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--accent);
+  flex-shrink: 0;
+  animation: pip-pulse .9s ease-in-out infinite;
+}
+@keyframes pip-pulse {
+  0%,100% { opacity: 1; transform: scale(1); }
+  50%      { opacity: .5; transform: scale(.7); }
+}
+/* keep card-back for potential re-use */
 .card-back {
-  width: 18px;
-  height: 26px;
+  width: 14px;
+  height: 20px;
   background: #1d4ed8;
-  border-radius: 3px;
+  border-radius: 2px;
   border: 1.5px solid white;
   background-image: repeating-linear-gradient(
     45deg, rgba(255,255,255,.07) 0, rgba(255,255,255,.07) 2px, transparent 2px, transparent 6px
   );
-}
-.opp-count {
-  font-size: .8rem;
-  color: var(--text-muted);
-}
-.opp-count.uno {
-  color: var(--accent);
-  font-weight: 700;
+  flex-shrink: 0;
 }
 
 /* ── Board ─────────────────────────────────────────────────────────────────── */
@@ -567,6 +598,23 @@ body {
   letter-spacing: .02em;
 }
 
+/* ── Catch UNO button (in opponent box) ───────────────────────────────────── */
+.btn-catch {
+  font-size: .65rem;
+  font-weight: 800;
+  padding: .22rem .5rem;
+  border-radius: 5px;
+  background: #dc2626;
+  color: white;
+  border: none;
+  cursor: pointer;
+  white-space: nowrap;
+  flex-shrink: 0;
+  letter-spacing: .02em;
+  animation: uno-pulse 1s ease-in-out infinite;
+}
+.btn-catch:hover { background: #b91c1c; }
+
 /* ── UNO button ────────────────────────────────────────────────────────────── */
 .btn-uno {
   background: #dc2626;
@@ -619,8 +667,31 @@ body {
 }
 
 /* ── Responsive tweaks ─────────────────────────────────────────────────────── */
-@media (max-width: 480px) {
-  :root { --card-w: 58px; --card-h: 87px; }
-  .card .symbol { font-size: 1.4rem; }
-  .card .corner { font-size: .52rem; }
+@media (max-width: 600px) {
+  #opponents-area {
+    grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
+    gap: .35rem;
+    padding: .5rem .6rem .25rem;
+  }
+  .opponent-box { padding: .38rem .5rem; }
+  .opp-avatar   { width: 26px; height: 26px; font-size: .72rem; }
+  .opp-name     { font-size: .72rem; }
+  .opp-count    { font-size: .64rem; }
+
+  #board-area   { padding: .7rem; gap: 1rem; }
+}
+
+@media (max-width: 420px) {
+  :root { --card-w: 54px; --card-h: 81px; }
+  .card .symbol { font-size: 1.25rem; }
+  .card .corner { font-size: .48rem; }
+
+  #opponents-area {
+    grid-template-columns: repeat(auto-fill, minmax(100px, 1fr));
+    gap: .28rem;
+  }
+  .opp-avatar { width: 22px; height: 22px; font-size: .65rem; }
+  .game-header { padding: .5rem .7rem; }
+  .uno-logo-sm { font-size: 1.3rem; }
+  #hdr-turn    { font-size: .82rem; }
 }

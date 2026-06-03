@@ -16,6 +16,24 @@ from uno.player import Player
 from uno.ai import choose_action
 import server.session as sessions
 
+# ── UNO call tracking (local games) ───────────────────────────────────────────
+# Maps game_id → set of player indices who have called UNO this vulnerable window.
+# A window opens when a player drops to 1 card; resets when they leave 1-card state.
+_uno_called: dict = {}
+
+
+def _compute_vulnerable(gid: str, game: Game) -> list:
+    """Return list of player indices with 1 card who haven't called UNO."""
+    called = _uno_called.get(gid, set())
+    # Clear called entries for players no longer at 1 card (new window later)
+    stale = {i for i in called if game.players[i].card_count != 1}
+    if stale:
+        _uno_called[gid] -= stale
+        called = _uno_called[gid]
+    return [i for i, p in enumerate(game.players)
+            if p.card_count == 1 and i not in called]
+
+
 # ── App setup ──────────────────────────────────────────────────────────────────
 
 app = FastAPI(title="UNO")
@@ -66,6 +84,7 @@ def _card_dict(card, playable: Optional[bool] = None) -> dict:
 def _game_state(gid: str, game: Game, messages: List[str]) -> dict:
     cp = game.current_player
     playable = game.playable_indices()
+    vulnerable = _compute_vulnerable(gid, game)
 
     players_out = []
     for i, p in enumerate(game.players):
@@ -76,12 +95,13 @@ def _game_state(gid: str, game: Game, messages: List[str]) -> dict:
             else []
         )
         players_out.append({
-            "index":      i,
-            "name":       p.name,
-            "is_human":   p.is_human,
-            "is_current": is_current,
-            "card_count": p.card_count,
-            "hand":       hand,
+            "index":          i,
+            "name":           p.name,
+            "is_human":       p.is_human,
+            "is_current":     is_current,
+            "card_count":     p.card_count,
+            "hand":           hand,
+            "uno_vulnerable": i in vulnerable,
         })
 
     human_count = sum(1 for p in game.players if p.is_human)
@@ -207,7 +227,32 @@ async def draw_card(gid: str):
 @app.delete("/api/game/{gid}")
 async def end_game(gid: str):
     sessions.delete(gid)
+    _uno_called.pop(gid, None)
     return {"ok": True}
+
+
+@app.post("/api/game/{gid}/call_uno")
+async def call_uno(gid: str):
+    game = sessions.get(gid)
+    if not game:
+        raise HTTPException(404, "Game not found.")
+    _uno_called.setdefault(gid, set()).add(game._current_idx)
+    return _game_state(gid, game, [])
+
+
+@app.post("/api/game/{gid}/catch/{target_idx}")
+async def catch_uno(gid: str, target_idx: int):
+    game = sessions.get(gid)
+    if not game:
+        raise HTTPException(404, "Game not found.")
+    vulnerable = _compute_vulnerable(gid, game)
+    if target_idx not in vulnerable:
+        raise HTTPException(400, "That player already called UNO!")
+    player = game.players[target_idx]
+    player.add_cards(game.deck.draw_many(4))
+    _uno_called.setdefault(gid, set()).add(target_idx)  # close window
+    msg = f"Caught! {player.name} forgot to call UNO and draws 4 cards!"
+    return _game_state(gid, game, [msg])
 
 
 # ── Online multiplayer rooms ───────────────────────────────────────────────────
@@ -255,6 +300,10 @@ async def ws_endpoint(ws: WebSocket, room_code: str, player_id: str):
                 await room.play_card(player_id, data.get('card_index', 0), data.get('chosen_color'))
             elif t == 'draw':
                 await room.draw_card(player_id)
+            elif t == 'call_uno':
+                await room.call_uno(player_id)
+            elif t == 'catch_uno':
+                await room.catch_uno(player_id, data.get('target_index', -1))
     except WebSocketDisconnect:
         room.players[player_id].ws = None
         await room.broadcast(room.room_msg())

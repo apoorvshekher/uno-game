@@ -76,6 +76,7 @@ class Room:
         self.order:   List[str] = []
         self.game:    Optional[Game] = None
         self.status   = 'waiting'   # waiting | playing | finished
+        self._uno_called: set = set()  # player indices who called UNO this window
 
     # ── Players ────────────────────────────────────────────────────────────────
 
@@ -122,11 +123,20 @@ class Room:
                 state = self._state_for(rp, messages)
                 await self.send(pid, {'type': 'game_state', 'state': state})
 
+    def _vulnerable(self) -> List[int]:
+        g = self.game
+        # Clear stale called entries
+        stale = {i for i in self._uno_called if g.players[i].card_count != 1}
+        self._uno_called -= stale
+        return [i for i, p in enumerate(g.players)
+                if p.card_count == 1 and i not in self._uno_called]
+
     def _state_for(self, viewer: 'RoomPlayer', messages: List[str]) -> dict:
         g        = self.game
         playable = g.playable_indices()
         is_my_turn = (g._current_idx == viewer.game_index and g.current_player.is_human)
 
+        vulnerable = self._vulnerable()
         players_out = []
         for i, p in enumerate(g.players):
             is_viewer = (i == viewer.game_index)
@@ -135,13 +145,14 @@ class Room:
                 if is_viewer else []
             )
             players_out.append({
-                'index':      i,
-                'name':       p.name,
-                'is_human':   p.is_human,
-                'is_current': (i == g._current_idx),
-                'is_viewer':  is_viewer,
-                'card_count': p.card_count,
-                'hand':       hand,
+                'index':          i,
+                'name':           p.name,
+                'is_human':       p.is_human,
+                'is_current':     (i == g._current_idx),
+                'is_viewer':      is_viewer,
+                'card_count':     p.card_count,
+                'hand':           hand,
+                'uno_vulnerable': i in vulnerable,
             })
 
         return {
@@ -226,6 +237,26 @@ class Room:
 
         msgs = [msg] + await self._run_cpu()
         await self.broadcast_game(msgs)
+
+    async def call_uno(self, player_id: str):
+        rp = self.players.get(player_id)
+        if not rp or self.game is None:
+            return
+        self._uno_called.add(rp.game_index)
+        await self.broadcast_game([])
+
+    async def catch_uno(self, catcher_id: str, target_index: int):
+        if self.game is None:
+            return
+        vulnerable = self._vulnerable()
+        if target_index not in vulnerable:
+            await self.send(catcher_id, {'type': 'error', 'message': 'That player already called UNO!'})
+            return
+        player = self.game.players[target_index]
+        player.add_cards(self.game.deck.draw_many(4))
+        self._uno_called.add(target_index)  # close window
+        msg = f"Caught! {player.name} forgot to call UNO and draws 4 cards!"
+        await self.broadcast_game([msg])
 
     async def draw_card(self, player_id: str):
         rp = self.players.get(player_id)
