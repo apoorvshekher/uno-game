@@ -477,6 +477,88 @@ body {
 .winner-sub { color: var(--text-muted); margin: .4rem 0 2rem; }
 #play-again-btn { width: 100%; }
 
+/* ── Mode tabs ─────────────────────────────────────────────────────────────── */
+.mode-tabs {
+  display: flex;
+  border-radius: 8px;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  margin-bottom: 1.6rem;
+}
+.mode-tab {
+  flex: 1;
+  padding: .6rem;
+  background: transparent;
+  border: none;
+  color: var(--text-muted);
+  font-size: .95rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background .15s, color .15s;
+}
+.mode-tab.active {
+  background: var(--accent);
+  color: #000;
+}
+
+/* ── Waiting room ───────────────────────────────────────────────────────────── */
+#waiting-screen {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 2rem;
+}
+#waiting-screen[hidden] { display: none; }
+.room-code-box {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  background: var(--surface2);
+  border-radius: 10px;
+  padding: .9rem 1.2rem;
+  margin-bottom: 1rem;
+}
+.room-code-label {
+  font-size: .7rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: .06em;
+  color: var(--text-muted);
+  margin-bottom: .15rem;
+}
+#room-code-big {
+  font-size: 2rem;
+  font-weight: 900;
+  letter-spacing: .18em;
+  color: var(--accent);
+}
+.waiting-player-row {
+  display: flex;
+  align-items: center;
+  gap: .7rem;
+  padding: .55rem .8rem;
+  border-radius: 8px;
+  background: var(--surface2);
+  margin-bottom: .4rem;
+}
+.waiting-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #22c55e;
+  flex-shrink: 0;
+}
+.waiting-dot.offline { background: var(--border); }
+.waiting-player-name { flex: 1; font-size: .92rem; }
+.waiting-host-badge {
+  font-size: .7rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: .04em;
+  color: var(--accent);
+}
+
 /* ── Turn indicator ────────────────────────────────────────────────────────── */
 #hdr-turn {
   color: var(--accent);

@@ -3,10 +3,12 @@ import asyncio
 from pathlib import Path
 from typing import List, Optional
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
+
+from server.room import create_room as _room_create, join_room as _room_join, get_room as _room_get
 
 from uno.card import Color
 from uno.game import Game
@@ -206,3 +208,53 @@ async def draw_card(gid: str):
 async def end_game(gid: str):
     sessions.delete(gid)
     return {"ok": True}
+
+
+# ── Online multiplayer rooms ───────────────────────────────────────────────────
+
+class RoomRequest(BaseModel):
+    name: str = 'Player'
+
+
+@app.post("/api/room/new")
+async def new_room(req: RoomRequest):
+    name = req.name.strip()[:16] or 'Player'
+    code, player_id = _room_create(name)
+    return {'room_code': code, 'player_id': player_id}
+
+
+@app.post("/api/room/{code}/join")
+async def join_room(code: str, req: RoomRequest):
+    name = req.name.strip()[:16] or 'Player'
+    try:
+        room, player_id = _room_join(code, name)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    return {'room_code': room.code, 'player_id': player_id}
+
+
+@app.websocket("/ws/{room_code}/{player_id}")
+async def ws_endpoint(ws: WebSocket, room_code: str, player_id: str):
+    room = _room_get(room_code)
+    if not room or player_id not in room.players:
+        await ws.close(code=4004)
+        return
+
+    await ws.accept()
+    room.players[player_id].ws = ws
+    await ws.send_json(room.room_msg())
+    await room.broadcast(room.room_msg())
+
+    try:
+        while True:
+            data = await ws.receive_json()
+            t = data.get('type')
+            if t == 'start_game':
+                await room.start_game(player_id)
+            elif t == 'play':
+                await room.play_card(player_id, data.get('card_index', 0), data.get('chosen_color'))
+            elif t == 'draw':
+                await room.draw_card(player_id)
+    except WebSocketDisconnect:
+        room.players[player_id].ws = None
+        await room.broadcast(room.room_msg())

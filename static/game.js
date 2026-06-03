@@ -8,6 +8,13 @@ let pendingWildCardEl    = null;
 let unoCalled    = false;
 let prevTurnIdx  = null;
 
+// Online mode
+let isOnlineMode    = false;
+let myPlayerId      = null;
+let wsConnection    = null;
+let currentRoomCode = null;
+let isRoomHost      = false;
+
 // ── DOM refs ───────────────────────────────────────────────────────────────────
 const $ = id => document.getElementById(id);
 const setupScreen   = $('setup-screen');
@@ -34,6 +41,8 @@ const playerLabel   = $('player-label');
 const handArea      = $('hand-area');
 const actionBar     = $('action-bar');
 const drawBtn       = $('draw-btn');
+
+const waitingScreen = $('waiting-screen');
 
 const passOverlay   = $('pass-overlay');
 const passTitle     = $('pass-title');
@@ -102,6 +111,148 @@ function updateHint() {
   }
 }
 updateHint();
+
+// ── Mode tabs ──────────────────────────────────────────────────────────────────
+
+document.querySelectorAll('.mode-tab').forEach(btn => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('.mode-tab').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    const isOnline = btn.dataset.mode === 'online';
+    $('setup-form').hidden  = isOnline;
+    $('online-panel').hidden = !isOnline;
+  });
+});
+
+// ── Online lobby ───────────────────────────────────────────────────────────────
+
+$('join-toggle-btn').addEventListener('click', () => {
+  const row = $('join-code-row');
+  row.hidden = !row.hidden;
+});
+
+$('create-room-btn').addEventListener('click', async () => {
+  const name = $('online-name').value.trim() || 'Player';
+  $('create-room-btn').disabled = true;
+  try {
+    const data = await api('POST', '/api/room/new', { name });
+    myPlayerId      = data.player_id;
+    currentRoomCode = data.room_code;
+    isRoomHost      = true;
+    isOnlineMode    = true;
+    showWaitingRoom(data.room_code);
+    connectWS(data.room_code, data.player_id);
+  } catch (err) {
+    alert('Could not create room: ' + err.message);
+  } finally {
+    $('create-room-btn').disabled = false;
+  }
+});
+
+$('confirm-join-btn').addEventListener('click', async () => {
+  const name = $('online-name').value.trim() || 'Player';
+  const code = $('room-code-input').value.trim().toUpperCase();
+  if (!code) { alert('Enter a room code.'); return; }
+  $('confirm-join-btn').disabled = true;
+  try {
+    const data = await api('POST', `/api/room/${code}/join`, { name });
+    myPlayerId      = data.player_id;
+    currentRoomCode = data.room_code;
+    isRoomHost      = false;
+    isOnlineMode    = true;
+    showWaitingRoom(data.room_code);
+    connectWS(data.room_code, data.player_id);
+  } catch (err) {
+    alert('Could not join room: ' + err.message);
+  } finally {
+    $('confirm-join-btn').disabled = false;
+  }
+});
+
+function showWaitingRoom(code) {
+  setupScreen.hidden   = true;
+  waitingScreen.hidden = false;
+  $('room-code-big').textContent = code;
+  $('start-online-btn').hidden = !isRoomHost;
+}
+
+function connectWS(roomCode, playerId) {
+  const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+  wsConnection = new WebSocket(`${proto}//${location.host}/ws/${roomCode}/${playerId}`);
+
+  wsConnection.onmessage = e => {
+    const msg = JSON.parse(e.data);
+    if (msg.type === 'room_state') {
+      updateWaitingRoom(msg);
+    } else if (msg.type === 'game_state') {
+      if (!waitingScreen.hidden) {
+        waitingScreen.hidden = true;
+        gameScreen.hidden    = false;
+        window.scrollTo(0, 0);
+      }
+      render(msg.state);
+      animateCpuPlays(msg.state);
+    } else if (msg.type === 'error') {
+      showError(msg.message);
+    }
+  };
+
+  wsConnection.onclose = () => {
+    if (!gameScreen.hidden) showError('Connection lost — please refresh.');
+  };
+}
+
+function updateWaitingRoom(msg) {
+  const list = $('waiting-players-list');
+  list.innerHTML = '';
+  msg.players.forEach(p => {
+    const row = document.createElement('div');
+    row.className = 'waiting-player-row';
+    row.innerHTML = `
+      <div class="waiting-dot ${p.connected ? '' : 'offline'}"></div>
+      <span class="waiting-player-name">${esc(p.name)}</span>
+      ${p.player_id === msg.host_id ? '<span class="waiting-host-badge">Host</span>' : ''}
+    `;
+    list.appendChild(row);
+  });
+  const hint = $('waiting-hint');
+  if (isRoomHost) {
+    const startBtn = $('start-online-btn');
+    if (msg.players.length >= 2) {
+      startBtn.disabled = false;
+      hint.textContent = `${msg.players.length} players connected`;
+    } else {
+      startBtn.disabled = true;
+      hint.textContent = 'Waiting for at least 1 more player…';
+    }
+  } else {
+    hint.textContent = 'Waiting for the host to start…';
+  }
+}
+
+$('start-online-btn').addEventListener('click', () => {
+  if (wsConnection) wsConnection.send(JSON.stringify({ type: 'start_game' }));
+});
+
+$('copy-code-btn').addEventListener('click', () => {
+  navigator.clipboard.writeText(currentRoomCode || '').then(() => {
+    $('copy-code-btn').textContent = 'Copied!';
+    setTimeout(() => { $('copy-code-btn').textContent = 'Copy'; }, 1500);
+  });
+});
+
+$('leave-room-btn').addEventListener('click', () => {
+  if (wsConnection) wsConnection.close();
+  wsConnection    = null;
+  isOnlineMode    = false;
+  myPlayerId      = null;
+  currentRoomCode = null;
+  waitingScreen.hidden = true;
+  setupScreen.hidden   = false;
+  window.scrollTo(0, 0);
+});
+
+// ── Local game form ────────────────────────────────────────────────────────────
 
 setupForm.addEventListener('submit', async e => {
   e.preventDefault();
@@ -187,55 +338,66 @@ function render(state) {
       .join(' ');
   }
 
-  // Current player hand
-  if (cp.is_human && cp.hand.length) {
-    playerLabel.innerHTML = `Your turn, <span>${esc(cp.name)}</span>!`;
+  // Whose hand to show + whether actions are enabled
+  const handPlayer = isOnlineMode
+    ? state.players.find(p => p.is_viewer) || null
+    : (cp.is_human ? cp : null);
+  const isMyTurn = isOnlineMode ? !!state.is_my_turn : !!handPlayer;
+
+  if (handPlayer) {
+    if (isMyTurn) {
+      playerLabel.innerHTML = `Your turn, <span>${esc(handPlayer.name)}</span>!`;
+    } else {
+      playerLabel.innerHTML = `<span>${esc(handPlayer.name)}</span> — waiting for <span>${esc(cp.name)}</span>…`;
+    }
+
     handArea.innerHTML = '';
-    cp.hand.forEach((card, i) => {
-      const el = makeCard(card, card.playable);
+    handPlayer.hand.forEach((card, i) => {
+      const playable = isMyTurn && card.playable;
+      const el = makeCard(card, playable);
       el.dataset.cardIndex = i;
-      if (card.playable) {
+      if (playable) {
         el.addEventListener('click', () => onCardClick(i, card, el));
       }
       handArea.appendChild(el);
     });
 
-    // Draw button + optional UNO button
-    drawBtn.style.display = '';
     actionBar.innerHTML = '';
-    if (state.pending_draw > 0) {
-      const hasDraw = cp.hand.some(c => c.playable && (c.card_type === 'Draw Two' || c.card_type === 'Wild Draw Four'));
-      const badge = document.createElement('span');
-      badge.className = 'pending-draw-badge';
-      badge.textContent = `Must draw ${state.pending_draw} cards!`;
-      actionBar.appendChild(drawBtn);
-      actionBar.appendChild(badge);
-      drawBtn.textContent = hasDraw ? `Stack or Draw ${state.pending_draw}` : `Draw ${state.pending_draw}`;
-    } else {
-      actionBar.appendChild(drawBtn);
-      drawBtn.textContent = 'Draw Card';
-    }
+    if (isMyTurn) {
+      drawBtn.style.display = '';
+      if (state.pending_draw > 0) {
+        const hasDraw = handPlayer.hand.some(c => c.playable && (c.card_type === 'Draw Two' || c.card_type === 'Wild Draw Four'));
+        const badge = document.createElement('span');
+        badge.className = 'pending-draw-badge';
+        badge.textContent = `Must draw ${state.pending_draw} cards!`;
+        actionBar.appendChild(drawBtn);
+        actionBar.appendChild(badge);
+        drawBtn.textContent = hasDraw ? `Stack or Draw ${state.pending_draw}` : `Draw ${state.pending_draw}`;
+      } else {
+        actionBar.appendChild(drawBtn);
+        drawBtn.textContent = 'Draw Card';
+      }
 
-    // UNO button — show when 1 or 2 cards remain
-    if (cp.hand.length <= 2) {
-      const unoBtn = document.createElement('button');
-      unoBtn.className = 'btn btn-uno';
-      unoBtn.textContent = unoCalled ? '✓ UNO!' : '🔴 UNO!';
-      if (unoCalled) unoBtn.style.animation = 'none';
-      unoBtn.addEventListener('click', () => {
-        unoCalled = true;
-        showUnoFlash();
-        unoBtn.textContent = '✓ UNO!';
-        unoBtn.style.animation = 'none';
-      });
-      actionBar.appendChild(unoBtn);
+      if (handPlayer.hand.length <= 2) {
+        const unoBtn = document.createElement('button');
+        unoBtn.className = 'btn btn-uno';
+        unoBtn.textContent = unoCalled ? '✓ UNO!' : '🔴 UNO!';
+        if (unoCalled) unoBtn.style.animation = 'none';
+        unoBtn.addEventListener('click', () => {
+          unoCalled = true;
+          showUnoFlash();
+          unoBtn.textContent = '✓ UNO!';
+          unoBtn.style.animation = 'none';
+        });
+        actionBar.appendChild(unoBtn);
+      }
     }
 
     playerLabel.style.display = '';
     handArea.style.display = '';
     actionBar.style.display = '';
   } else {
-    // CPU turn — hide hand area
+    // Local CPU turn
     playerLabel.innerHTML = `🤖 <span>${esc(cp.name)}</span> is thinking…`;
     handArea.innerHTML = '';
     actionBar.innerHTML = '';
@@ -311,6 +473,10 @@ colorBtns.forEach(btn => {
 });
 
 drawBtn.addEventListener('click', async () => {
+  if (isOnlineMode) {
+    wsConnection.send(JSON.stringify({ type: 'draw' }));
+    return;
+  }
   drawBtn.disabled = true;
   try {
     const state = await api('POST', `/api/game/${gameId}/draw`);
@@ -327,6 +493,13 @@ drawBtn.addEventListener('click', async () => {
 drawPileBtn.addEventListener('click', () => drawBtn.click());
 
 async function doPlay(cardIndex, chosenColor, cardEl) {
+  if (isOnlineMode) {
+    const msg = { type: 'play', card_index: cardIndex };
+    if (chosenColor) msg.chosen_color = chosenColor;
+    wsConnection.send(JSON.stringify(msg));
+    if (cardEl) animateCardToDiscard(cardEl);
+    return;
+  }
   const body = { card_index: cardIndex };
   if (chosenColor) body.chosen_color = chosenColor;
   try {
@@ -345,10 +518,11 @@ async function doPlay(cardIndex, chosenColor, cardEl) {
 // ── Pass-device overlay ────────────────────────────────────────────────────────
 
 function handlePassScreenIfNeeded(state, initial = false) {
+  if (isOnlineMode) return;  // each player is on their own device
   if (state.winner) return;
   const cp = state.players[state.current_player_index];
   if (!cp.is_human) return;
-  if (state.human_count <= 1 && !initial) return; // single human, no pass needed
+  if (state.human_count <= 1 && !initial) return;
   if (state.human_count <= 1) return;
 
   // Multiple humans: show pass screen before revealing hand
@@ -369,6 +543,13 @@ passReadyBtn.addEventListener('click', () => {
 
 playAgainBtn.addEventListener('click', () => {
   winnerOverlay.hidden = true;
+  if (isOnlineMode) {
+    // Go back to waiting room so host can restart
+    gameScreen.hidden    = true;
+    waitingScreen.hidden = false;
+    window.scrollTo(0, 0);
+    return;
+  }
   gameScreen.hidden    = true;
   setupScreen.hidden   = false;
   window.scrollTo(0, 0);
@@ -380,6 +561,15 @@ playAgainBtn.addEventListener('click', () => {
 
 quitBtn.addEventListener('click', () => {
   if (!confirm('Quit the current game?')) return;
+  if (isOnlineMode) {
+    if (wsConnection) wsConnection.close();
+    wsConnection = null; isOnlineMode = false; myPlayerId = null; currentRoomCode = null;
+    winnerOverlay.hidden = true;
+    gameScreen.hidden    = true;
+    setupScreen.hidden   = false;
+    window.scrollTo(0, 0);
+    return;
+  }
   if (gameId) api('DELETE', `/api/game/${gameId}`).catch(() => {});
   winnerOverlay.hidden = true;
   gameScreen.hidden    = true;

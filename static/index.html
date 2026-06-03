@@ -12,8 +12,13 @@
   <div id="setup-screen">
     <div class="setup-card">
       <h1 class="uno-logo">UNO</h1>
-      <p class="setup-sub">Local game — online play coming soon</p>
 
+      <div class="mode-tabs">
+        <button type="button" class="mode-tab active" data-mode="local">Local</button>
+        <button type="button" class="mode-tab" data-mode="online">Online</button>
+      </div>
+
+      <!-- Local game form -->
       <form id="setup-form">
         <label class="field-label">Human Players</label>
         <div id="player-fields">
@@ -37,6 +42,47 @@
 
         <button type="submit" class="btn btn-primary" id="start-btn">Deal Cards</button>
       </form>
+
+      <!-- Online game panel -->
+      <div id="online-panel" hidden>
+        <label class="field-label">Your Name</label>
+        <input type="text" id="online-name" class="player-name"
+               placeholder="Your name" value="Player 1" maxlength="16" style="width:100%">
+
+        <div class="setup-row" style="margin-top:1.2rem">
+          <button type="button" class="btn btn-primary" id="create-room-btn" style="flex:1">Create Room</button>
+          <button type="button" class="btn btn-outline" id="join-toggle-btn" style="flex:1">Join Room</button>
+        </div>
+
+        <div id="join-code-row" hidden style="margin-top:.9rem">
+          <input type="text" id="room-code-input" class="player-name"
+                 placeholder="Room code (e.g. ABC12)" maxlength="5"
+                 style="width:100%;text-transform:uppercase;letter-spacing:.12em;text-align:center;font-size:1.15rem">
+          <button type="button" class="btn btn-primary" id="confirm-join-btn"
+                  style="width:100%;margin-top:.5rem">Join →</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Waiting Room ──────────────────────────────────────────────────────── -->
+  <div id="waiting-screen" hidden>
+    <div class="setup-card">
+      <h2 class="uno-logo" style="font-size:2.4rem;margin-bottom:1.2rem">UNO</h2>
+      <div class="room-code-box">
+        <div>
+          <div class="room-code-label">Room Code</div>
+          <div id="room-code-big"></div>
+        </div>
+        <button type="button" class="btn btn-sm btn-outline" id="copy-code-btn">Copy</button>
+      </div>
+      <p class="hint" style="text-align:center;margin-bottom:1.2rem">Share this code — friends enter it to join!</p>
+      <div id="waiting-players-list"></div>
+      <button type="button" class="btn btn-primary" id="start-online-btn" hidden
+              style="width:100%;margin-top:1.5rem">Start Game</button>
+      <p id="waiting-hint" class="hint" style="text-align:center;margin-top:.7rem"></p>
+      <button type="button" class="btn btn-outline" id="leave-room-btn"
+              style="width:100%;margin-top:.6rem;font-size:.85rem">Leave Room</button>
     </div>
   </div>
 
