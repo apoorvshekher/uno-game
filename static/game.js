@@ -67,7 +67,6 @@ const quitBtn       = $('quit-btn');
 const hdrRoom       = $('hdr-room');
 const hdrTurn       = $('hdr-turn');
 const hdrDirection  = $('hdr-direction');
-const hdrDrawPile   = $('hdr-draw-pile');
 const unoFlash      = $('uno-flash');
 const opponentsArea = $('opponents-area');
 const boardArea     = $('board-area');
@@ -351,7 +350,6 @@ function render(state) {
   const cp = state.players[state.current_player_index];
   hdrTurn.textContent      = `▶ ${cp.name}'s turn`;
   hdrDirection.textContent = state.direction === 1 ? '→' : '←';
-  hdrDrawPile.textContent  = `🂠 ${state.draw_pile_size}`;
   if (isOnlineMode && state.room_code) {
     hdrRoom.textContent = `🔑 ${state.room_code}`;
     hdrRoom.hidden = false;
@@ -745,8 +743,10 @@ async function animateDrawCards(messages) {
 }
 
 function findOpponentBox(playerName) {
+  // Skip your own seat: your plays/draws are already animated from your hand,
+  // so matching the self box here would double-animate them.
   return [...opponentsArea.querySelectorAll('.opponent-box')]
-    .find(b => b.dataset.playerName === playerName) || null;
+    .find(b => b.dataset.playerName === playerName && !b.classList.contains('self')) || null;
 }
 
 // ── UNO flash ──────────────────────────────────────────────────────────────────
