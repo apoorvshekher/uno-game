@@ -286,9 +286,18 @@ async def ws_endpoint(ws: WebSocket, room_code: str, player_id: str):
         return
 
     await ws.accept()
-    room.players[player_id].ws = ws
-    await ws.send_json(room.room_msg())
-    await room.broadcast(room.room_msg())
+    rp = room.players[player_id]
+    rp.ws = ws
+    room.cancel_cleanup()  # someone is here — abort any pending room teardown
+
+    if room.status == 'playing' and room.game is not None:
+        # Reconnecting into a live game: send the board straight away and let others know.
+        await ws.send_json({'type': 'game_state', 'state': room._state_for(rp, ['You reconnected.'])})
+        room.cancel_autopilot()  # hand control back to the returning player
+        await room.broadcast_game([f'{rp.name} reconnected.'])
+    else:
+        await ws.send_json(room.room_msg())
+        await room.broadcast(room.room_msg())
 
     try:
         while True:
@@ -306,4 +315,10 @@ async def ws_endpoint(ws: WebSocket, room_code: str, player_id: str):
                 await room.catch_uno(player_id, data.get('target_index', -1))
     except WebSocketDisconnect:
         room.players[player_id].ws = None
-        await room.broadcast(room.room_msg())
+        if room.status == 'playing' and room.game is not None:
+            # Mid-game: tell everyone on the board. broadcast_game re-arms the autopilot,
+            # so the AI covers this seat if it's their turn.
+            await room.broadcast_game([f'{room.players[player_id].name} disconnected.'])
+        else:
+            await room.broadcast(room.room_msg())
+        room.schedule_cleanup_if_empty()

@@ -15,6 +15,44 @@ let wsConnection    = null;
 let currentRoomCode = null;
 let isRoomHost      = false;
 
+// ── Persisted session (survives refresh / tab close → reconnect) ─────────────────
+const SESSION_KEY = 'uno.session';
+
+function saveSession() {
+  try {
+    localStorage.setItem(SESSION_KEY, JSON.stringify({
+      playerId: myPlayerId, roomCode: currentRoomCode, isHost: isRoomHost,
+    }));
+  } catch (_) { /* storage may be unavailable */ }
+}
+
+function clearSession() {
+  try { localStorage.removeItem(SESSION_KEY); } catch (_) {}
+}
+
+function loadSession() {
+  try {
+    const raw = localStorage.getItem(SESSION_KEY);
+    return raw ? JSON.parse(raw) : null;
+  } catch (_) { return null; }
+}
+
+// Tear down any online session and return to the setup screen.
+function backToSetup() {
+  if (wsConnection) { try { wsConnection.close(); } catch (_) {} }
+  wsConnection    = null;
+  isOnlineMode    = false;
+  myPlayerId      = null;
+  currentRoomCode = null;
+  isRoomHost      = false;
+  clearSession();
+  winnerOverlay.hidden = true;
+  waitingScreen.hidden = true;
+  gameScreen.hidden    = true;
+  setupScreen.hidden   = false;
+  window.scrollTo(0, 0);
+}
+
 // ── DOM refs ───────────────────────────────────────────────────────────────────
 const $ = id => document.getElementById(id);
 const setupScreen   = $('setup-screen');
@@ -26,6 +64,7 @@ const cpuBtns       = document.querySelectorAll('.cpu-btn');
 const playerHint    = $('player-count-hint');
 const startBtn      = $('start-btn');
 const quitBtn       = $('quit-btn');
+const hdrRoom       = $('hdr-room');
 const hdrTurn       = $('hdr-turn');
 const hdrDirection  = $('hdr-direction');
 const hdrDrawPile   = $('hdr-draw-pile');
@@ -140,6 +179,7 @@ $('create-room-btn').addEventListener('click', async () => {
     currentRoomCode = data.room_code;
     isRoomHost      = true;
     isOnlineMode    = true;
+    saveSession();
     showWaitingRoom(data.room_code);
     connectWS(data.room_code, data.player_id);
   } catch (err) {
@@ -160,6 +200,7 @@ $('confirm-join-btn').addEventListener('click', async () => {
     currentRoomCode = data.room_code;
     isRoomHost      = false;
     isOnlineMode    = true;
+    saveSession();
     showWaitingRoom(data.room_code);
     connectWS(data.room_code, data.player_id);
   } catch (err) {
@@ -183,10 +224,16 @@ function connectWS(roomCode, playerId) {
   wsConnection.onmessage = e => {
     const msg = JSON.parse(e.data);
     if (msg.type === 'room_state') {
+      // Fresh-load reconnect into a still-waiting room: reveal the lobby first.
+      if (isOnlineMode && gameScreen.hidden && waitingScreen.hidden) {
+        showWaitingRoom(msg.room_code);
+      }
       updateWaitingRoom(msg);
     } else if (msg.type === 'game_state') {
-      if (!waitingScreen.hidden) {
+      // Reveal the board, whether arriving from the waiting room or a fresh-load reconnect.
+      if (gameScreen.hidden) {
         waitingScreen.hidden = true;
+        setupScreen.hidden   = true;
         gameScreen.hidden    = false;
         window.scrollTo(0, 0);
       }
@@ -197,10 +244,28 @@ function connectWS(roomCode, playerId) {
     }
   };
 
-  wsConnection.onclose = () => {
-    if (!gameScreen.hidden) showError('Connection lost — please refresh.');
+  wsConnection.onclose = ev => {
+    // 4004 = room or seat no longer exists (e.g. abandoned room was cleaned up).
+    if (ev && ev.code === 4004) {
+      clearSession();
+      if (!gameScreen.hidden && setupScreen.hidden) backToSetup();
+      return;
+    }
+    // Best-effort: try to reconnect once from the persisted session before giving up.
+    if (!gameScreen.hidden && !reconnectAttempted && loadSession()) {
+      reconnectAttempted = true;
+      showError('Connection lost — reconnecting…');
+      setTimeout(() => connectWS(roomCode, playerId), 1500);
+    } else if (!gameScreen.hidden) {
+      showError('Connection lost — please refresh.');
+    }
   };
+
+  // A successful message resets the one-shot reconnect guard.
+  wsConnection.addEventListener('open', () => { reconnectAttempted = false; });
 }
+
+let reconnectAttempted = false;
 
 function updateWaitingRoom(msg) {
   const list = $('waiting-players-list');
@@ -242,14 +307,7 @@ $('copy-code-btn').addEventListener('click', () => {
 });
 
 $('leave-room-btn').addEventListener('click', () => {
-  if (wsConnection) wsConnection.close();
-  wsConnection    = null;
-  isOnlineMode    = false;
-  myPlayerId      = null;
-  currentRoomCode = null;
-  waitingScreen.hidden = true;
-  setupScreen.hidden   = false;
-  window.scrollTo(0, 0);
+  backToSetup();
 });
 
 // ── Local game form ────────────────────────────────────────────────────────────
@@ -294,6 +352,12 @@ function render(state) {
   hdrTurn.textContent      = `▶ ${cp.name}'s turn`;
   hdrDirection.textContent = state.direction === 1 ? '→' : '←';
   hdrDrawPile.textContent  = `🂠 ${state.draw_pile_size}`;
+  if (isOnlineMode && state.room_code) {
+    hdrRoom.textContent = `🔑 ${state.room_code}`;
+    hdrRoom.hidden = false;
+  } else {
+    hdrRoom.hidden = true;
+  }
 
   // Reset UNO called flag on new turn
   if (prevTurnIdx !== state.current_player_index) {
@@ -301,14 +365,20 @@ function render(state) {
     prevTurnIdx = state.current_player_index;
   }
 
-  // Opponents
-  const humanIdx = firstHumanIndex(state);
+  // Player panel — show everyone (including yourself) so the rotation is clear
+  const selfIndex = isOnlineMode
+    ? state.players.findIndex(p => p.is_viewer)
+    : (cp.is_human ? state.current_player_index : -1);
   opponentsArea.innerHTML = '';
   state.players.forEach((p, i) => {
-    if (p.is_viewer) return;                    // online: skip self
-    if (!isOnlineMode && p.is_human && i === humanIdx) return; // local: skip current viewer
+    const isSelf = i === selfIndex;
+    // `connected` only meaningful for online human seats; CPUs/self are always "present".
+    const isAway = isOnlineMode && p.is_human && !isSelf && p.connected === false;
     const box = document.createElement('div');
-    box.className = 'opponent-box' + (p.is_current ? ' current' : '');
+    box.className = 'opponent-box'
+      + (p.is_current ? ' current' : '')
+      + (isSelf ? ' self' : '')
+      + (isAway ? ' disconnected' : '');
     box.dataset.playerName = p.name;
     const isUno  = p.card_count === 1;
     const icon   = p.is_human ? '👤' : '🤖';
@@ -316,16 +386,17 @@ function render(state) {
     box.innerHTML = `
       <div class="opp-avatar">${avatar}</div>
       <div class="opp-info">
-        <div class="opp-name">${esc(p.name)} ${icon}</div>
+        <div class="opp-name">${esc(p.name)}${isSelf ? ' (You)' : ''} ${icon}</div>
         <div class="opp-meta">
           <div class="opp-count ${isUno ? 'uno' : ''}">
             ${isUno ? '🔴 UNO!' : p.card_count + (p.card_count === 1 ? ' card' : ' cards')}
           </div>
+          ${isAway ? '<div class="opp-away">📴 away</div>' : ''}
         </div>
       </div>
       ${p.is_current ? '<div class="opp-turn-pip"></div>' : ''}
     `;
-    if (p.uno_vulnerable) {
+    if (p.uno_vulnerable && !isSelf) {
       const catchBtn = document.createElement('button');
       catchBtn.className = 'btn-catch';
       catchBtn.textContent = 'Catch!';
@@ -430,10 +501,6 @@ function render(state) {
     winnerName.textContent = state.winner;
     winnerOverlay.hidden = false;
   }
-}
-
-function firstHumanIndex(state) {
-  return state.players.findIndex(p => p.is_human);
 }
 
 // ── Card element factory ───────────────────────────────────────────────────────
@@ -586,12 +653,7 @@ playAgainBtn.addEventListener('click', () => {
 quitBtn.addEventListener('click', () => {
   if (!confirm('Quit the current game?')) return;
   if (isOnlineMode) {
-    if (wsConnection) wsConnection.close();
-    wsConnection = null; isOnlineMode = false; myPlayerId = null; currentRoomCode = null;
-    winnerOverlay.hidden = true;
-    gameScreen.hidden    = true;
-    setupScreen.hidden   = false;
-    window.scrollTo(0, 0);
+    backToSetup();
     return;
   }
   if (gameId) api('DELETE', `/api/game/${gameId}`).catch(() => {});
@@ -729,3 +791,17 @@ function showError(msg) {
   bar.prepend(el);
   setTimeout(() => el.remove(), 4000);
 }
+
+// ── Auto-reconnect on load ───────────────────────────────────────────────────────
+// If a previous online session is saved (refresh / accidental tab close), reclaim the
+// seat. The server re-attaches the existing player_id and replies with room_state
+// (lobby) or game_state (live board), which the WS handlers route to the right screen.
+(function initReconnect() {
+  const s = loadSession();
+  if (!s || !s.playerId || !s.roomCode) return;
+  myPlayerId      = s.playerId;
+  currentRoomCode = s.roomCode;
+  isRoomHost      = !!s.isHost;
+  isOnlineMode    = true;
+  connectWS(s.roomCode, s.playerId);
+})();

@@ -11,6 +11,12 @@ from uno.game import Game
 from uno.player import Player
 from uno.ai import choose_action
 
+# ── Tuning ─────────────────────────────────────────────────────────────────────
+
+AUTO_TAKEOVER_GRACE = 10   # seconds a disconnected player's turn waits before the AI steps in
+AUTO_MOVE_DELAY     = 1.2  # seconds between consecutive AI auto-moves (so plays are watchable)
+ABANDON_TTL         = 120  # seconds with zero connected players before a room is deleted
+
 # ── Serialization (mirrors app.py helpers) ─────────────────────────────────────
 
 _COLOR_HEX = {
@@ -77,6 +83,8 @@ class Room:
         self.game:    Optional[Game] = None
         self.status   = 'waiting'   # waiting | playing | finished
         self._uno_called: set = set()  # player indices who called UNO this window
+        self._autopilot_task: Optional[asyncio.Task] = None  # AI fills in for away players
+        self._cleanup_task:   Optional[asyncio.Task] = None  # deletes the room once abandoned
 
     # ── Players ────────────────────────────────────────────────────────────────
 
@@ -122,6 +130,8 @@ class Room:
             if rp and rp.ws:
                 state = self._state_for(rp, messages)
                 await self.send(pid, {'type': 'game_state', 'state': state})
+        # Re-evaluate after every state change: if the next player is away, let the AI take over.
+        self.ensure_autopilot()
 
     def _vulnerable(self) -> List[int]:
         g = self.game
@@ -144,6 +154,8 @@ class Room:
                 [_card_dict(c, j in playable) for j, c in enumerate(p.hand)]
                 if is_viewer else []
             )
+            # Game seat i corresponds to the player_id at self.order[i]
+            seat_rp = self.players.get(self.order[i]) if i < len(self.order) else None
             players_out.append({
                 'index':          i,
                 'name':           p.name,
@@ -153,10 +165,12 @@ class Room:
                 'card_count':     p.card_count,
                 'hand':           hand,
                 'uno_vulnerable': i in vulnerable,
+                'connected':      seat_rp.ws is not None if seat_rp else False,
             })
 
         return {
             'game_id':              self.code,
+            'room_code':            self.code,
             'status':               'finished' if g.winner else 'playing',
             'winner':               g.winner.name if g.winner else None,
             'current_player_index': g._current_idx,
@@ -189,6 +203,101 @@ class Room:
                     _, msg = self.game.draw_cards()
             msgs.append(msg)
         return msgs
+
+    # ── Autopilot for disconnected players ───────────────────────────────────────
+
+    def _current_seat_player(self) -> Optional['RoomPlayer']:
+        if self.game is None:
+            return None
+        idx = self.game._current_idx
+        if idx >= len(self.order):
+            return None
+        return self.players.get(self.order[idx])
+
+    def _current_is_away_human(self) -> bool:
+        rp = self._current_seat_player()
+        return (
+            self.game is not None
+            and not self.game.winner
+            and self.game.current_player.is_human
+            and (rp is None or rp.ws is None)
+        )
+
+    def ensure_autopilot(self) -> None:
+        """Start the autopilot if the current player is an away human and it isn't already running."""
+        if self.status != 'playing' or not self._current_is_away_human():
+            return
+        if self._autopilot_task and not self._autopilot_task.done():
+            return
+        self._autopilot_task = asyncio.create_task(self._autopilot())
+
+    def cancel_autopilot(self) -> None:
+        if self._autopilot_task and not self._autopilot_task.done():
+            self._autopilot_task.cancel()
+        self._autopilot_task = None
+
+    async def _autopilot(self) -> None:
+        """Play moves on behalf of disconnected humans until a connected human is up or the game ends.
+
+        Spends nearly all its time in asyncio.sleep, so cancellation (on reconnect) lands
+        during the wait, never mid-mutation.
+        """
+        try:
+            while self.game and not self.game.winner:
+                if not self._current_is_away_human():
+                    break
+                seat_idx = self.game._current_idx
+                await asyncio.sleep(AUTO_TAKEOVER_GRACE)
+                # Re-check after the grace wait — the player may have reconnected or the turn moved.
+                if not self.game or self.game.winner:
+                    break
+                if self.game._current_idx != seat_idx or not self._current_is_away_human():
+                    continue
+                name = self.game.current_player.name
+                card_idx, color = choose_action(self.game)
+                if card_idx is None:
+                    _, msg = self.game.draw_cards()
+                else:
+                    ok, msg = self.game.play_card(card_idx, color)
+                    if not ok:
+                        _, msg = self.game.draw_cards()
+                msgs = [f'{name} (away) — auto: {msg}']
+                msgs.extend(await self._run_cpu())  # clear any following real CPUs
+                await self.broadcast_game(msgs)
+                await asyncio.sleep(AUTO_MOVE_DELAY)
+        except asyncio.CancelledError:
+            pass
+        finally:
+            self._autopilot_task = None
+
+    # ── Room lifecycle / cleanup ─────────────────────────────────────────────────
+
+    def _has_connected_player(self) -> bool:
+        return any(rp.ws is not None for rp in self.players.values())
+
+    def schedule_cleanup_if_empty(self) -> None:
+        """If nobody is connected, delete the room after ABANDON_TTL (unless someone returns)."""
+        if self._has_connected_player():
+            return
+        if self._cleanup_task and not self._cleanup_task.done():
+            return
+        self._cleanup_task = asyncio.create_task(self._cleanup_after_ttl())
+
+    def cancel_cleanup(self) -> None:
+        if self._cleanup_task and not self._cleanup_task.done():
+            self._cleanup_task.cancel()
+        self._cleanup_task = None
+
+    async def _cleanup_after_ttl(self) -> None:
+        try:
+            await asyncio.sleep(ABANDON_TTL)
+            if not self._has_connected_player():
+                self.cancel_autopilot()
+                _ROOMS.pop(self.code, None)
+        except asyncio.CancelledError:
+            pass
+        finally:
+            self._cleanup_task = None
 
     # ── Game actions ───────────────────────────────────────────────────────────
 

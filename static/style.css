@@ -175,6 +175,11 @@ body {
   font-size: .9rem;
   color: var(--text-muted);
 }
+#hdr-room {
+  font-weight: 700;
+  letter-spacing: .06em;
+  color: var(--accent);
+}
 
 /* ── Opponents ─────────────────────────────────────────────────────────────── */
 #opponents-area {
@@ -197,6 +202,22 @@ body {
 .opponent-box.current {
   border-color: var(--accent);
   box-shadow: 0 0 10px rgba(245,158,11,.22);
+}
+.opponent-box.self {
+  background: var(--surface2);
+}
+.opponent-box.self .opp-name {
+  color: var(--accent);
+}
+.opponent-box.disconnected {
+  opacity: .55;
+  border-style: dashed;
+}
+.opp-away {
+  font-size: .64rem;
+  font-weight: 700;
+  color: var(--text-muted);
+  white-space: nowrap;
 }
 .opp-avatar {
   width: 30px;
